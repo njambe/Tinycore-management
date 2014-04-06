@@ -1,0 +1,365 @@
+#! /bin/bash
+
+#### Global variables ####
+version="1.2"
+windowspart="/dev/sda2"
+linbootpart="/dev/sda5"
+linuxpart="/dev/sda6"
+imagespart="/dev/sda7"
+
+#### FetchSystem functions check if the partition is already mounted. If not, they mount them
+function fetchSystemWin {
+	partition="$1"								# Get the full partition name (/dev/sda2)
+	partname=`echo $partition | awk -F "/" '{print $3}'`			# Get only the partition name (sda2)
+
+	mountans=`mount | grep $partition`					# Check if partition is mounted
+	if [ "$mountans" == "" ]; then						# If not mounted
+		location="/mnt/$partname"
+		mkdir $location 2> /dev/null
+		ntfs-3g $partition $location					# Mount the partition
+		echo "The Windows partition ($partition) is now mounted on $location"
+		unmountWin="1"
+	else
+		rocheck=`echo $mountans | grep rw`				# Check if the partition is writeable
+		if [ "$rocheck" == "" ]; then
+			echo "ERROR : The Windows partition ($partition) is read-only. Please unmount it"
+			echo "Abort"
+			exit 1
+		fi
+		location=`echo $mountans | awk '{print $3}'`			# If mounted and rw, the location (/mnt/sda2) is copied
+		echo "The Windows partition ($partition) is mounted on $location"
+	fi
+}
+
+function fetchSystemLinBoot {
+	partition="$1"
+	partname=`echo $partition | awk -F "/" '{print $3}'`
+
+	mountans=`mount | grep $partition`
+	if [ "$mountans" == "" ]; then
+		location="/mnt/$partname"
+		mkdir $location 2> /dev/null
+		mount -t ext3 $partition $location
+		echo "The Linux partition ($partition) is now mounted on $location"
+		unmountLinBoot="1"
+	else
+		rocheck=`echo $mountans | grep rw`
+		if [ "$rocheck" == "" ]; then
+			echo 'ERROR : The Linux boot partition ($partition) is read-only. Please unmount it'
+			echo 'Abort'
+			exit 1
+		fi
+		location=`echo $mountans | awk '{print $3}'`
+		echo "The Linux boot partition ($partition) is mounted on $location"
+	fi
+}
+
+function fetchSystemLin {
+	partition="$1"
+	partname=`echo $partition | awk -F "/" '{print $3}'`
+
+	mountans=`mount | grep $partition`
+	if [ "$mountans" == "" ]; then
+		location="/mnt/$partname"
+		mkdir $location 2> /dev/null
+		mount -t ext3 $partition $location
+		echo "The Linux partition ($partition) is now mounted on $location"
+		unmountLin="1"
+	else
+		rocheck=`echo $mountans | grep rw`
+		if [ "$rocheck" == "" ]; then
+			echo 'ERROR : The Linux partition ($partition) is read-only. Please unmount it'
+			echo 'Abort'
+			exit 1
+		fi
+		location=`echo $mountans | awk '{print $3}'`
+		echo "The Linux partition ($partition) is mounted on $location"
+	fi
+}
+
+function fetchImagesPartition {
+	partname=`echo $imagespart | awk -F "/" '{print $3}'`
+
+	mountans=`mount | grep $imagespart`
+	if [ "$mountans" == "" ]; then
+		imglocation="/mnt/$partname"
+		mkdir $imglocation 2> /dev/null
+		mount $imagespart $imglocation
+		echo "The Images partition ($imagespart) is now mounted on $imglocation"
+	else
+		rocheck=`echo $mountans | grep rw`
+		if [ "$rocheck" == "" ]; then
+			echo 'ERROR : The Images partition ($imagespart) is read-only. Please unmount it'
+			echo 'Abort'
+			exit 1
+		fi
+		imglocation=`echo $mountans | awk '{ print $3 }'`
+		echo "The Images partition ($imagespart) is mounted on $imglocation"
+	fi
+}
+
+#### This function fill the disk with a 0 file then delete it
+function zeroing {
+	file=$location/zerofile
+	touch $file								# Create the zero file
+	echo "Creating zeros on disk $partname..."
+	dd if=/dev/zero of=$file bs=500K &> /var/log/dd &					# Fill the file with 0
+	pid=$!
+
+	#### Do action while zeros are written
+	trap "kill $pid 2> /dev/null" EXIT
+	while kill -0 $pid 2> /dev/null
+	do
+		#### Display the remaining space every 2 sec
+		echo -en "\r                                                           "
+		echo -en "\rDone : " `df | awk "/\/dev\/$partname/ "'{ print $5 }'` "     \t\t"
+		sleep 2
+	done
+	trap - EXIT
+	echo -en "\rDone : " `df | awk "/\/dev\/$partname/ "'{ print $5 }'`
+	echo -en " "`tail -n 1 /var/log/dd | awk -F ',' '{ print "in" $2", at" $3 }'`
+	echo -e "\r\t\t\t\t\t\t\t\t\t[\e[32mOK\e[39m]"
+
+	rm $file								# Delete the file and unmount the partition
+}
+
+#### This function displays a message while the copy is running
+function message {
+	pid=$1
+	file=$2
+	filename=`basename $file`
+	trap "kill $1 2> /dev/null" EXIT
+	while kill -0 $pid 2> /dev/null
+	do
+		echo -en "                                                 "
+		echo -en "\rAlready done : " `ls -lh $file | awk "/$filename/ "'{ print $5 }'` "     \t\t"
+		sleep 2
+	done
+	trap - EXIT
+	echo -en "                                                 "
+	echo -en "\r\e[32mFinal size : " `ls -lh $file | awk "/$filename/ "'{ print $5 }'` "\e[39m"
+	echo -en " "`tail -n 1 /var/log/dd | awk -F ',' '{ print "in" $2", at" $3}'`
+	echo -e "\r\t\t\t\t\t\t\t\t\t[\e[32mOK\e[39m]"
+}
+
+#### This function unmount partitions if needed
+function unmount {
+	if [ "$unmountLin" == "1" ]; then
+		umount $linux
+		echo "Linux partition unmounted"
+		unmountLin="0"
+	fi
+
+	if [ "$unmountLinBoot" == "1" ]; then
+		umount $linboot
+		echo "Linux boot partition unmounted"
+		unmountLinBoot="0"
+	fi
+
+	if [ "$unmountWin" == "1" ]; then
+		umount $windows
+		echo "Windows partition unmounted"
+		unmountWin="0"
+	fi
+}
+
+function help {
+	echo "Usage: $0 [options]"
+	echo ""
+	echo "This script can copy a system partition and save it locally on the images partition"
+	echo -e "\t Write zeros on the disk (can be skipped)"
+	echo -e "\t Copy the partition"
+	echo -e "\t Compress the image (can be skipped)"
+	echo ""
+	echo "Options :"
+	echo -e "\t -a : Make an image of the whole system (same as -lbwm)"
+	echo ""
+	echo -e "\t -l : Make an image of the Linux partition (if $linuxpart)"
+	echo -e "\t -b : Make an image of the Linux boot partition (if $linbootpart)"
+	echo -e "\t -w : Make an image of the Windows partition (if $windowspart)"
+	echo ""
+	echo -e "\t -m : Make an image of the MBR and grub reserved space"
+	echo ""
+	echo -e "\t -L <file> : Specify Linux partition (/dev/????) and make an image"
+	echo -e "\t -B <file> : Specify Linux boot partition (/dev/????) and make an image"
+	echo -e "\t -W <file> : Specify Windows partition (/dev/????) and make an image"
+	echo -e "\t -I <file> : Specify images partition (/dev/????)"
+	echo ""
+	echo -e "\t -q : Quick copy (do not write zeros nor compress images - save time not space)"
+	echo -e "\t -n : Do not write zeros on partition (if previously done - save time)"
+	echo -e "\t -s : Calculates the image's sum"
+	echo ""
+	echo -e "\t -v : Display the version of the script"
+	echo -e "\t -h : Display help"
+	exit 0
+}
+
+function version {
+	echo "$0: Version $version"
+	echo "Group 1, C&N3, University of Abertay Dundee"
+	echo "2014"
+	exit 0
+}
+
+if [ `whoami` != "root" ]; then
+	echo "This script needs root privileges"
+	exit 1
+fi
+
+#### If the parameters number is 0
+if [ $# == 0 ]; then
+	help
+fi
+
+while getopts :L:B:W:I:lbwamqnvh opt
+do
+	case "$opt" in
+		h) help;;
+		v) version;;
+		L) linux="$OPTARG";;
+		B) linboot="$OPTARG";;
+		W) windows="$OPTARG";;
+		I) imagespart="$OPTARG";;
+		l) linux=$linuxpart;;
+		b) linboot=$linbootpart;;
+		w) windows=$windowspart;;
+		a) linux=$linuxpart
+		   linboot=$linbootpart
+		   windows=$windowspart
+		   mbr="1";;
+		m) mbr="1";;
+		s) calcsum="1";;
+		q) quick="1";;
+		n) notzero="1";;
+		\?) help;;
+		:) echo "Option -$OPTARG needs an argument"
+		   help;;
+	esac
+done
+
+fetchImagesPartition
+
+if [ "$linboot" != "" ]; then
+	echo -e "\e[33m\nImaging : Linux boot\n\e[39m"
+
+	#### Write zero if asked
+	if [ "$notzero" != "1" -a "$quick" != "1" ]; then
+		#### Mount the partition
+		fetchSystemLinBoot $linboot
+
+		zeroing $linboot
+
+		#### Unmount if needed (if partition wasn't mounted at beginning)
+		unmount
+	fi
+
+	mkdir $imglocation/custom 2> /dev/null
+
+	echo "Copying the partition..."
+	#### Copy the partition
+	if [ "$quick" != "1" ]; then
+		#### Copy and compress
+		dd if=$linboot bs=1M 2> /var/log/dd | gzip -c > $imglocation/custom/linboot.tar.gz &
+		message $! $imglocation/custom/linboot.tar.gz
+		ext="tar.gz"
+	else
+		#### Only copy
+		dd if=$linboot of=$imglocation/custom/linboot.img bs=1M 2> /var/log/dd &
+		message $! $imglocation/custom/linboot.img
+		ext="img"
+	fi
+
+	if [ "$calcsum" == "1" ]; then
+		#### Update the sha hash on the hash file
+		echo "Calculating the sum..."
+		shasum=`sha1sum $imglocation/custom/linboot.$ext | cut -d"/" -f1,5`
+		sed -i "/^.*linboot.$ext$/d" sums
+		echo $shasum >> sums
+	fi
+fi
+
+if [ "$linux" != "" ]; then
+	echo -e "\e[33m\nImaging : Linux\n\e[39m"
+
+	fetchSystemLin $linux
+	rm $location/etc/NetworkManager/system-connections/Wired\ connection\ 1 2> /dev/null
+	sed -i "/[A-F0-9]\{2\}:[A-F0-9]\{2\}:[A-F0-9]\{2\}:[A-F0-9]\{2\}:[A-F0-9]\{2\}:[A-F0-9]\{2\}/d" $location/etc/NetworkManager/NetworkManager.conf
+	sed -i "/[a-f0-9]\{2\}:[a-f0-9]\{2\}:[a-f0-9]\{2\}:[a-f0-9]\{2\}:[a-f0-9]\{2\}:[a-f0-9]\{2\}/d" $location/etc/udev/rules.d/70-persistent-net.rules
+
+	if [ "$notzero" != "1" -a "$quick" != "1" ]; then
+		zeroing $linux
+	fi
+	unmount
+
+	mkdir $imglocation/custom 2> /dev/null
+
+	echo "Copying the partition..."
+	if [ "$quick" != "1" ]; then
+		dd if=$linux bs=1M 2> /var/log/dd | gzip -c > $imglocation/custom/linux.tar.gz &
+		message $! $imglocation/custom/linux.tar.gz
+		ext="tar.gz"
+	else
+		dd if=$linux of=$imglocation/custom/linux.img bs=1M 2> /var/log/dd &
+		message $! $imglocation/custom/linux.img
+		ext="img"
+	fi
+
+	if [ "$calcsum" == "1" ]; then
+		echo "Calculating the sum..."
+		shasum=`sha1sum $imglocation/custom/linux.* | cut -d"." -f1 | cut -d"/" -f1,5`
+		sed -i '/^.*linux.$ext$/d' sums
+		echo $shasum >> sums
+	fi
+fi
+
+if [ "$windows" != "" ]; then
+	echo -e "\e[33m\nImaging : Windows\n\e[39m"
+
+	fetchSystemWin $windows
+	echo "Removing page and hibernation files"
+	rm $location/hiberfil.sys
+	rm $location/pagefile.sys
+
+	if [ "$notzero" != "1" -a "$quick" != "1" ]; then
+		zeroing $windows
+	fi
+	unmount
+
+	mkdir $imglocation/custom 2> /dev/null
+
+	echo "Copying the partition..."
+	if [ "$quick" != "1" ]; then
+		dd if=$windows bs=1M 2> /var/log/dd | gzip -c > $imglocation/custom/windows.tar.gz &
+		message $! $imglocation/custom/windows.tar.gz
+		ext="tar.gz"
+	else
+		dd if=$windows of=$imglocation/custom/windows.img bs=1M 2> /var/log/dd &
+		message $! $imglocation/custom/windows.img
+		ext="img"
+	fi
+
+	if [ "$calcsum" == "1" ]; then
+		echo "Calculating the sum..."
+		shasum=`sha1sum $imglocation/custom/windows.* | cut -d"." -f1 | cut -d"/" -f1,5`
+		sed -i '/^.*windows.$ext$/d' sums
+		echo $shasum >> sums
+	fi
+fi
+
+if [ "$mbr" == "1" ]; then
+	echo -e "\e[33m\nImaging : MBR + Grub\n\e[39m"
+
+	mkdir $imglocation/custom 2> /dev/null
+
+	dd if=/dev/sda of=$imglocation/custom/mbr.out bs=1048576 count=1 2> /var/log/dd &
+	message $! $imglocation/custom/mbr.out
+
+	if [ "$calcsum" == "1" ]; then
+		echo "Calculating the sum..."
+		shasum=`sha1sum $imglocation/custom/mbr.out | cut -d"." -f1 | cut -d"/" -f1,5`
+		sed -i '/^.*mbr.out$/d' sums
+		echo $shasum >> sums
+	fi
+fi
+
+echo

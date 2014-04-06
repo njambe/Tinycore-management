@@ -1,0 +1,264 @@
+#! /bin/bash
+#### Global variables ####
+version="1.2a"
+windowspart="/dev/sda2"
+linbootpart="/dev/sda5"
+linuxpart="/dev/sda6"
+imagespart="/dev/sda7"
+
+function fetchImagesPartition {
+	partname=`echo $imagespart | awk -F "/" '{print $3}'`
+	mountans=`mount | grep $imagespart`
+
+	if [ "$mountans" == "" ]; then
+		imglocation="/mnt/$partname"
+		mkdir $imglocation 2> /dev/null
+		mount $imagespart $imglocation
+		echo "The Images partition ($imagespart) is now mounted on $imglocation"
+	else
+		rocheck=`echo $mountans | grep rw`
+		if [ "$rocheck" == "" ]; then
+			echo 'ERROR : The Images partition ($imagespart) is read-only. Please unmount it'
+			echo 'Abort'
+			exit 1
+		fi
+		imglocation=`echo $mountans | awk '{print $3}'`
+		echo "The Images partition ($imagespart) is mounted on $imglocation"
+	fi
+}
+
+function help {
+	echo "Usage: $0 [options]"
+	echo ""
+	echo "This script can restore a system from an image previously created"
+	echo "By default, images are restored from the custom folder"
+	echo -e "\t Decompress the image (if needed)"
+	echo -e "\t Copy it on the partition"
+	echo ""
+	echo "Name convention: "
+	echo -e "\t Linux : linux.tar.gz (compressed) or linux.img (uncompressed)"
+	echo -e "\t Linux boot : linboot.tar.gz (compressed) or linboot.img (uncompressed)"
+	echo -e "\t Windows : windows.tar.gz (compressed) or windows.img (uncompressed)"
+	echo ""
+	echo "Options :"
+	echo -e "\t -a : Restore the whole system (same as -lbwm)"
+	echo ""
+	echo -e "\t -l : Restore the Linux partition (if $linuxpart)"
+	echo -e "\t -b : Restore the Linux boot partition (if $linbootpart)"
+	echo -e "\t -w : Restore the Windows partition (if $windowspart)"
+	echo ""
+	echo -e "\t -m : Restore the MBR and grub reserved partition"
+	echo ""
+	echo -e "\t -L <file> : Specify Linux partition (/dev/????) to restore"
+	echo -e "\t -B <file> : Specify Linux boot partition (/dev/????) to restore"
+	echo -e "\t -W <file> : Specify Windows partition (/dev/????) to restore"
+	echo -e "\t -I <file> : Specify images partition (/dev/????)"
+	echo ""
+	echo -e "\t -o : Restore images from the original folder"
+	echo -e "\t -s : Secure restore : Check if the image hasn't been altered during copy"
+	echo ""
+	echo -e "\t -v : Display the version of the script"
+	echo -e "\t -h : Display help"
+	exit 0
+}
+
+function version {
+	echo "$0: Version $version"
+	echo "Group 1, C&N3, University of Abertay Dundee"
+	echo "2014"
+	exit 0
+}
+
+function message {
+	pid=$1
+
+	trap "kill $1 2> /dev/null" EXIT
+	while kill -0 $pid 2> /dev/null
+	do
+		echo -en "                                                           "
+		kill -USR1 $pid
+		echo -en "\rAlready decompressed : " `tail -n 1 /var/log/dd | cut -d"(" -f2 | cut ")" -f1` " / "$2
+		sleep 2
+	done
+	trap - EXIT
+	echo -en "                                                           "
+	echo -en "\r\e[32mDone : " `tail -n 1 /var/log/dd | cut -d"(" -f2 | cut ")" -f1` "\e[39m"
+	echo -en " "`tail -n 1 /var/log/dd | awk -F ',' '{ print "in" $2", at" $3}'`
+	echo -e "\r\t\t\t\t\t\t\t\t\t[\e[32mOK\e[39m]"
+}
+
+if [ `whoami` != "root" ]; then
+	echo "This script needs root privileges"
+	exit 1
+fi
+
+#### If the parameters number is 0
+if [ $# == 0 ]; then
+	help
+fi
+
+while getopts :L:B:W:I:lbwamosvh opt
+do
+	case "$opt" in
+		h) help;;
+		v) version;;
+		L) linux="$OPTARG";;
+		B) linboot="$OPTARG";;
+		W) windows="$OPTARG";;
+		I) imagespart="$OPTARG";;
+		l) linux=$linuxpart;;
+		b) linboot=$linbootpart;;
+		w) windows=$windowspart;;
+		a) linux=$linuxpart
+		   linboot=$linbootpart
+		   windows=$windowspart
+		   mbr="1";;
+		m) mbr="1";;
+		o) original="1";;
+		s) secure="1";;
+		\?) help;;
+		:) echo "Option -$OPTARG needs an argument"
+		   help
+		   exit 1;;
+	esac
+done
+
+fetchImagesPartition
+
+if [ "$original" == "1" ]; then
+	imgloc="$imglocation/original"
+else
+	imgloc="$imglocation/custom"
+fi
+
+if [ "$linboot" != "" ]; then
+	echo -e "\e[33m\nRestoring : Linux boot\n\e[39m"
+
+	filename=`ls $imgloc/linboot.*`
+	
+	if [ ! -f $filename ]; then
+		echo "The Linux boot image can't be found"
+		echo "Abort"
+	else 
+		echo "File used : "$filename
+		if [ "$secure" == "1" ]; then
+			echo -n "Calculating the SHA-1 sum..."
+			shasum=`sha1sum $filename | cut -d" " -f1`
+			originalsum=`cat $imgloc/sums | grep linboot | cut -d" " -f1`
+			if [ "$shasum" != "$originalsum" ]; then
+				echo "The Linux boot image seems to be altered"
+				echo "Abort"
+				exit 1
+			fi
+			echo -e "\t\t[\e[32mOK\e[39m]"
+		fi
+
+		if [ "$filename" == "$imgloc/linboot.tar.gz" ]; then
+			gzip -dc $filename | dd of=$linboot bs=1M 2> /var/log/dd &
+			message $! "100MB"
+		else
+			dd of=$linboot if=$filename bs=1M 2> /var/log/dd &
+			message $! "100MB"
+		fi
+
+		echo -e "Done\n"
+	fi
+fi
+
+if [ "$linux" != "" ]; then
+	echo -e "\e[33m\nRestoring : Linux\n\e[39m"
+
+	filename=`ls $imgloc/linux.*`
+	
+	if [ ! -f $filename ]; then
+		echo "The Linux image can't be found"
+		echo "Abort"
+	else
+		echo "File used : "$filename
+		if [ "$secure" == "1" ]; then
+			echo -n "Calculating the SHA-1 sum..."
+			shasum=`sha1sum $filename | cut -d" " -f1`
+			originalsum=`cat $imgloc/sums | grep linux | cut -d" " -f1`
+			if [ "$shasum" != "$originalsum" ]; then
+				echo "The Linux image seems to be altered"
+				echo "Abort"
+				exit 1
+			fi
+			echo -e "\t\t[\e[32mOK\e[39m]"
+		fi
+
+		if [ "$filename" == "$imgloc/linux.tar.gz" ]; then
+			gzip -dc $filename | dd of=$linux bs=1M 2> /var/log/dd &
+			message $! "20GB"
+		else
+			dd of=$linux if=$filename bs=1M 2> /var/log/dd &
+			message $! "20GB"
+		fi
+
+		echo -e "Done\n"
+	fi
+fi
+
+if [ "$windows" != "" ]; then
+	echo -e "\e[33m\nRestoring : Windows\n\e[39m"
+
+	filename=`ls $imgloc/windows.*`
+	
+	if [ ! -f $filename ]; then
+		echo "The Windows image can't be found"
+		echo "Abort"
+	else
+		echo "File used : "$filename
+		if [ "$secure" == "1" ]; then
+			echo -n "Calculating the SHA-1 sum..."
+			shasum=`sha1sum $filename | cut -d" " -f1`
+			originalsum=`cat $imgloc/sums | grep windows | cut -d" " -f1`
+			if [ "$shasum" != "$originalsum" ]; then
+				echo "The Windows image seems to be altered"
+				echo "Abort"
+				exit 1
+			fi
+			echo -e "\t\t[\e[32mOK\e[39m]"
+		fi
+
+		if [ "$filename" == "$imgloc/windows.tar.gz" ]; then
+			gzip -dc $filename | dd of=$windows bs=1M 2> /var/log/dd &
+			message $! "30GB"
+		else
+			dd of=$windows if=$filename bs=1M 2> /var/log/dd &
+			message $! "30GB"
+		fi
+
+		echo -e "Done\n"
+	fi
+fi
+
+if [ "$mbr" == "1" ]; then
+	echo -e "\e[33m\nRestoring : MBR + Grub\n\e[39m"
+
+	filename=$imgloc/mbr.out
+
+	if [ ! -f $filename ]; then
+		echo "The MBR image can't be found"
+		echo "Abort"
+	else
+		echo "File used : "$filename
+		if [ "$secure" == "1" ]; then
+			echo -n "Calculating the SHA-1 sum..."
+			shasum=`sha1sum $filename | cut -d" " -f1`
+			originalsum=`cat $imgloc/sums | grep windows | cut -d" " -f1`
+			if [ "$shasum" != "$originalsum" ]; then
+				echo "The MBR image seems to be altered"
+				echo "Abort"
+				exit 1
+			fi
+			echo -e "\t\t[\e[32mOK\e[39m]"
+		fi
+
+		dd of=/dev/sda if=$filename bs=1048576 count=1 2> /var/log/dd &
+		message $! "1MB"
+
+		echo -e "Done\n"
+	fi
+fi
+echo

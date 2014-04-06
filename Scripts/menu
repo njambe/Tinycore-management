@@ -1,0 +1,363 @@
+#! /bin/bash
+version="1.1"
+rightpad=10
+first=1
+
+function draw {
+	let "start = $rightpad - 1"
+	let "nblines = $1 + 5"
+	echo -en "\e[44m"
+	echo -en "\e[3;"$start"H                                                          "
+	for i in `seq 4 $nblines`; do
+		echo -en "\e["$i";"$start"H                                                          \e[41m \e[44m"
+	done
+	echo -en "\e[49m"
+	echo -en "\e[$i;"$start"H  \e[41m                                                         "
+	echo -en "\e[49m"
+}
+
+function putstar {
+	echo -en "\e[44m"
+	let "pl = $old + 3"
+	let "right = $rightpad + 1"
+	echo -en "\e[$pl;"$right"H "
+	let "pl = $loc + 3"
+	echo -en "\e[$pl;"$right"H"
+	echo -n "*"
+	echo -en "\e[0;0H"
+	echo -en "\e[49m"
+}
+
+function message {
+	let "pl = $optnb + 7"
+	echo -en "\e[$pl;0H"
+	echo -en "\e[K"
+	echo $1
+	echo -en "\e[0;0H"
+}
+
+function title {
+	echo -en "\e[0;16H \e[1m \e[41m"$1"\e[0m"
+}
+
+function options {
+	line=4
+	echo -en "\e[44m"
+	for opt in `seq 1 $#`; do
+		echo -en "\e["$line";"$rightpad"H"
+		eval "echo -n \"( ) \"$`echo $opt`"
+		let "line += 1"
+	done
+	echo -en "\e[49m"
+}
+
+function one {
+	mes="ha"
+	i=0
+	while [ "$i" -le 15 ]
+	do
+		let "i += 1"
+		message "$mes"
+		sleep 0.05
+		mes="$mes ha"
+	done
+}
+
+function two {
+	message "Oh wait, you were serious ?"
+	sleep 1.5
+	message "Let me laugh even harder !"
+	sleep 1
+	mes="HA"
+	i=0
+	while [ "$i" -le 15 ]
+	do
+		let "i += 1"
+		message "$mes"
+		sleep 0.05
+		mes="$mes HA"
+	done
+}
+
+function control_c {
+#	message "Can't let you do that, Jack"
+	if [ "$first" == "1" ]; then
+		first=0
+		one
+	else
+		two
+		first=1
+	fi
+}
+
+function execcommand {
+	let "pl = $optnb + 9"
+	echo -en "\e[$pl;0H"
+	eval $1
+	echo ""
+	read -n 1 -p "Press a key to clear the screen and return to the menu..."
+	display1
+}
+
+function fullinstall {
+	message "Disk preparation..."
+	let "pl = $optnb + 9"
+	echo -en "\e[$pl;0H"
+	sudo preparedisk -m;
+
+	message "Installing the system..."
+	sudo restoreimg -ao
+
+	message "Updating the name..."
+	sudo winch -lwyi
+
+	echo ""
+	read -n 1 -p "Press a key to clear the screen and return to the menu..."
+	display1
+}
+
+function display1 {
+	menu=1
+	clear
+	optnb=6
+	loc=1
+	draw $optnb
+
+	title "Management menu for Windows and Linux (Group 1)"
+	options "Create a backup of the system" "Restore a backup" "Prepare the disk" "Install a full system from scratch" "Manage computer names" "Reboot"
+
+	putstar
+}
+
+function display11 {
+	menu=11
+	clear
+	optnb=4
+	loc=1
+	draw $optnb
+
+	title "Backup"
+	options "Backup all system" "Backup Windows" "Backup Linux" "Backup the MBR"
+
+	putstar
+}
+
+function display111 {
+	menu=111
+	sys="the whole system"
+	display11x
+}
+
+function display112 {
+	menu=112
+	sys="Windows"
+	display11x
+}
+
+function display113 {
+	menu=113
+	sys="Linux"
+	display11x
+}
+
+function display11x {
+	clear
+	optnb=4
+	loc=1
+	draw $optnb
+
+	title "Backup of $sys"
+	options "As is" "Only compress" "Full without check sum" "Full (Check sum + Write zero's + compress)"
+
+	putstar
+}
+
+function display12 {
+	menu=12
+	clear
+	optnb=4
+	loc=1
+	draw $optnb
+
+	title "Restore"
+	options "Restore all system" "Restore Windows" "Restore Linux" "Restore the MBR"
+
+	putstar
+}
+
+function display121 {
+	menu=121
+	sys="the whole system"
+	display12x
+}
+
+function display122 {
+	menu=122
+	sys="Windows"
+	display12x
+}
+
+function display123 {
+	menu=123
+	sys="Linux"
+	display12x
+}
+
+function display124 {
+	menu=124
+	sys="the MBR"
+	display12x
+}
+
+function display12x {
+	clear
+	optnb=3
+	loc=1
+	draw $optnb
+
+	title "Restoration of $sys"
+	options "From the custom image" "From the clean image" "From the clean image with a check sum"
+
+	putstar
+}
+
+function display13 {
+	menu=13
+	clear
+	optnb=3
+	loc=1
+	draw $optnb
+
+	title "Disk preparation"
+	options "Both" "Disk preparation (part table + format)" "Import clean images"
+
+	putstar
+}
+
+function display15 {
+	menu=15
+	clear
+	optnb=3
+	loc=1
+	draw $optnb
+
+	title "Names management"
+	options "Display the names" "Change the names to standardized name (Mxx)" "Change to a new name"
+
+	putstar
+}
+
+function display152 {
+	menu=152
+	display15x
+}
+
+function display153 {
+	menu=153
+	display15x
+}
+
+function display15x {
+	clear
+	optnb=3
+	loc=1
+	draw $optnb
+
+	title "Set a new computer name"
+	options "Both" "Windows" "Linux"
+
+	putstar
+}
+
+function option11 { display11; }
+function option12 { display12; }
+function option13 { display13; }
+function option14 { fullinstall; }
+function option15 { display15; }
+function option16 { sudo reboot; }
+function option111 { display111; }
+function option112 { display112; }
+function option113 { display113; }
+function option114 { execcommand "sudo createimg -m"; }
+function option121 { display121; }
+function option122 { display122; }
+function option123 { display123; }
+function option124 { display124; }
+function option131 { execcommand "sudo preparedisk -a"; }
+function option132 { execcommand "sudo preparedisk -p"; }
+function option133 { execcommand "sudo preparedisk -c"; }
+function option151 { execcommand "sudo winch -de"; }
+function option152 { display142; }
+function option153 { display143; }
+function option1111 { execcommand "sudo createimg -aq"; }
+function option1112 { execcommand "sudo createimg -an"; }
+function option1113 { execcommand "sudo createimg -a"; }
+function option1114 { execcommand "sudo createimg -as"; }
+function option1121 { execcommand "sudo createimg -wq"; }
+function option1122 { execcommand "sudo createimg -wn"; }
+function option1123 { execcommand "sudo createimg -w"; }
+function option1124 { execcommand "sudo createimg -ws"; }
+function option1131 { execcommand "sudo createimg -lbq"; }
+function option1132 { execcommand "sudo createimg -lbn"; }
+function option1133 { execcommand "sudo createimg -lb"; }
+function option1134 { execcommand "sudo createimg -lbs"; }
+function option1211 { execcommand "sudo restoreimg -a"; }
+function option1212 { execcommand "sudo restoreimg -ao"; }
+function option1213 { execcommand "sudo restoreimg -aos"; }
+function option1221 { execcommand "sudo restoreimg -w"; }
+function option1222 { execcommand "sudo restoreimg -wo"; }
+function option1223 { execcommand "sudo restoreimg -wos"; }
+function option1231 { execcommand "sudo restoreimg -lb"; }
+function option1232 { execcommand "sudo restoreimg -lbo"; }
+function option1233 { execcommand "sudo restoreimg -lbos"; }
+function option1241 { execcommand "sudo restoreimg -m"; }
+function option1242 { execcommand "sudo restoreimg -mo"; }
+function option1243 { execcommand "sudo restoreimg -mos"; }
+function option1521 { execcommand "sudo winch -lwyi"; }
+function option1522 { execcommand "sudo winch -wyi"; }
+function option1523 { execcommand "sudo winch -lyi"; }
+function option1531 { execcommand "sudo winch -lw"; }
+function option1532 { execcommand "sudo winch -w"; }
+function option1533 { execcommand "sudo winch -l"; }
+
+trap control_c SIGHUP SIGINT SIGKILL SIGTERM SIGSTOP SIGTSTP
+
+display1
+
+while :
+do
+	unset K1 K2 K3
+	read -s -n 1 K1
+	read -s -n 2 -t 0.001 K2
+	read -s -n 1 -t 0.001 K3
+	char="$K1$K2$K3"
+
+	if [ "$char" == $'\x1b' ]; then
+		# ESCAPE
+		if [ "$menu" -ne "1" ]; then
+			display${menu%?}
+		fi
+	elif [ "$char" == $'\x1b[B' ]; then
+		# DOWN
+		if [ "$loc" -lt "$optnb" ]; then
+			old=$loc
+			let "loc += 1"
+			putstar
+		fi
+	elif [ "$char" == $'\x1b[A' ]; then
+		# UP
+		if [ "$loc" -gt 1 ]; then
+			old=$loc
+			let "loc -= 1"
+			putstar
+		fi
+	elif [ "$char" == "" ]; then
+		option$menu$loc
+#		case "$loc" in
+#			1)option1;;
+#			2)option2;;
+#			3)option3;;
+#			4)option4;;
+#		esac
+	fi
+done

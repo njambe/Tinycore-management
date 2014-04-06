@@ -1,0 +1,283 @@
+#! /bin/bash
+
+# Global variables
+version="1.5"
+windowspart="/dev/sda2"
+linuxpart="/dev/sda6"
+
+function fetchSystemWin {
+	if [ "$1" == "" ]; then
+		echo "ERROR FSW 1"
+		exit 1
+	fi
+
+	partition="$1"
+	partname=`echo $partition | awk -F "/" '{print $3}'`
+	mountans=`mount | grep $partition`
+	if [ "$mountans" == "" ]; then
+		location="/mnt/$partname"
+		mkdir $location 2> /dev/null
+		ntfs-3g $1 $location
+		echo "The Windows partition ($partition) is now mounted on $location"
+		unmountWin="1"
+	else
+		rocheck=`echo $mountans | grep rw`
+		if [ "$rocheck" == "" ]; then
+			echo "ERROR : The Windows partition ($partition) is read-only. Please unmount it"
+			echo "Abort"
+			exit 1
+		fi
+		location=`echo $mountans | awk '{print $3}'`
+		echo "The Windows partition ($partition) is mounted on $location"
+	fi
+
+	if [ ! -f $location/Windows/System32/config/SYSTEM ]; then
+		echo "ERROR : The Windows system file can't be found"
+		echo "Abort"
+		unmount
+		exit 1
+	fi
+}
+
+function fetchSystemLin {
+	if [ "$1" == "" ]; then
+		echo "ERROR FSL 1"
+		exit 1
+	fi
+
+	partition="$1"
+	partname=`echo $partition | awk -F "/" '{print $3}'`
+	mountans=`mount | grep $partition`
+	if [ "$mountans" == "" ]; then
+		location="/mnt/$partname"
+		mkdir $location 2> /dev/null
+		mount -o rw $1 $location
+		echo "The Linux partition ($partition) is now mounted on $location"
+		unmountLin="1"
+	else
+		rocheck=`echo $mountans | grep rw`
+		if [ "$rocheck" == "" ]; then
+			echo 'ERROR : The Linux partition ($partition) is read-only. Please unmount it'
+			echo 'Abort'
+			exit 1
+		fi
+		location=`echo $mountans | awk '{print $3}'`
+		echo "The Linux partition ($partition) is mounted on $location"
+	fi
+
+	if [ ! -f $location/etc/hostname ]; then
+		echo "ERROR : The Linux system file can't be found"
+		echo "Abort"
+		unmount
+		exit 1
+	fi
+}
+
+function getNewName {
+	newname=M`ifconfig eth0 | grep "inet addr" | cut -d"." -f4 | cut -d" " -f1`
+}
+
+function changeWinName {
+	name="$1"
+	systemFile="$location/Windows/System32/config/SYSTEM"
+	echo -e "cd ControlSet001\\services\\Tcpip\\Parameters\ned Hostname\n$name\nq\ny\n" | chntpw $systemFile > /dev/null
+	echo -e "cd ControlSet001\\services\\Tcpip\\Parameters\ned NV Hostname\n$name\nq\ny\n" | chntpw $systemFile > /dev/null
+	echo -e "cd ControlSet001\\Control\\ComputerName\\ActiveComputerName\ned ComputerName\n$name\nq\ny\n" | chntpw $systemFile > /dev/null
+	echo -e "cd ControlSet001\\Control\\ComputerName\\ComputerName\ned ComputerName\n$name\nq\ny\n" | chntpw $systemFile > /dev/null
+	echo -e "cd ControlSet002\\services\\Tcpip\\Parameters\ned Hostname\n$name\nq\ny\n" | chntpw $systemFile > /dev/null
+	echo -e "cd ControlSet002\\services\\Tcpip\\Parameters\ned NV Hostname\n$name\nq\ny\n" | chntpw $systemFile > /dev/null
+	echo -e "cd ControlSet002\\Control\\ComputerName\\ActiveComputerName\ned ComputerName\n$name\nq\ny\n" | chntpw $systemFile > /dev/null
+	echo -e "cd ControlSet002\\Control\\ComputerName\\ComputerName\ned ComputerName\n$name\nq\ny\n" | chntpw $systemFile > /dev/null
+}
+
+function changeLinName {
+	echo "$1" > $location/etc/hostname
+	sed -rie "s/^127.0.1.1.+$/127.0.1.1       $1/g" $location/etc/hosts
+}
+
+function displayWin {
+	systemFile="$location/Windows/System32/config/SYSTEM"
+	name1=`echo -e "cd ControlSet001\\services\\Tcpip\\Parameters\ncat Hostname\nq\n" | chntpw $systemFile | tail -n 8 | head -n 1`
+	name2=`echo -e "cd ControlSet001\\services\\Tcpip\\Parameters\ncat NV Hostname\nq\n" | chntpw $systemFile | tail -n 8 | head -n 1`
+	name3=`echo -e "cd ControlSet001\\Control\\ComputerName\\ActiveComputerName\ncat ComputerName\nq\n" | chntpw $systemFile | tail -n 8 | head -n 1`
+	name4=`echo -e "cd ControlSet001\\Control\\ComputerName\\ComputerName\ncat ComputerName\nq\n" | chntpw $systemFile | tail -n 8 | head -n 1`
+	name5=`echo -e "cd ControlSet002\\services\\Tcpip\\Parameters\ncat Hostname\nq\n" | chntpw $systemFile | tail -n 8 | head -n 1`
+	name6=`echo -e "cd ControlSet002\\services\\Tcpip\\Parameters\ncat NV Hostname\nq\n" | chntpw $systemFile | tail -n 8 | head -n 1`
+	name7=`echo -e "cd ControlSet002\\Control\\ComputerName\\ActiveComputerName\ncat ComputerName\nq\n" | chntpw $systemFile | tail -n 8 | head -n 1`
+	name8=`echo -e "cd ControlSet002\\Control\\ComputerName\\ComputerName\ncat ComputerName\nq\n" | chntpw $systemFile | tail -n 8 | head -n 1`
+
+	echo "Displayed name of the Windows machine :"
+
+	if [ "$name1" == "" ]; then
+		echo "An error occured"
+		exit 1
+	fi
+
+	if [ `echo $name1 | tr '[:upper:]' '[:lower:]'` == `echo $name2 | tr '[:upper:]' '[:lower:]'` -a `echo $name2 | tr '[:upper:]' '[:lower:]'` == `echo $name4 | tr '[:upper:]' '[:lower:]'` ]; then
+		echo -e "Computer name : \e[32m$name1\e[39m"
+	else
+		echo "============= Active configuration ============="
+		echo -n "Tcpip/Hostname : "
+		echo -e "\e[32m$name1\e[39m"
+		echo -n "Tcpip/NV Hostname : "
+		echo -e "\e[32m$name2\e[39m"
+		echo -n "ActiveComputerName : "
+		echo -e "\e[32m$name3\e[39m"
+		echo -n "ComputerName : "
+		echo -e "\e[32m$name4\e[39m"
+	fi
+
+	if [ `echo $name5 | tr '[:upper:]' '[:lower:]'` == `echo $name6 | tr '[:upper:]' '[:lower:]'` -a `echo $name6 | tr '[:upper:]' '[:lower:]'` == `echo $name8 | tr '[:upper:]' '[:lower:]'` ]; then
+		echo -e "Backup computer name : \e[32m$name5\e[39m"
+	else
+		echo "============= Backup configuration ============="
+		echo -n "Tcpip/Hostname : "
+		echo -e "\e[32m$name5\e[39m"
+		echo -n "Tcpip/NV Hostname : "
+		echo -e "\e[32m$name6\e[39m"
+		echo -n "ActiveComputerName : "
+		echo -e "\e[32m$name7\e[39m"
+		echo -n "ComputerName : "
+		echo -e "\e[32m$name8\e[39m"
+	fi
+}
+
+function displayLin {
+	echo -e "Linux computer name : \e[32m"`head $location/etc/hostname`"\e[39m"
+}
+
+function unmount {
+	if [ "$unmountLin" == "1" ]; then
+		umount $linux
+		echo "Linux partition unmounted"
+		unmountLin="0"
+	fi
+	if [ "$unmountWin" == "1" ]; then
+		umount $windows
+		echo "Windows partition unmounted"
+		unmountWin="0"
+	fi
+}
+
+function help {
+	echo "Usage: $0 [options]"
+	echo ""
+	echo "This script can display and change computer name for both Windows and Linux systems on the disk"
+	echo ""
+	echo "Options :"
+	echo -e "\t -l : Change the name of the Linux computer (if $linuxpart)"
+	echo -e "\t -w : Change the name of the Windows computer (if $windowspart)"
+	echo -e "\t -d : Display Windows current computer name"
+	echo -e "\t -e : Display Linux current computer name"
+	echo ""
+	echo -e "\t -L <file> : Specify Linux partition (/dev/????) and change the name"
+	echo -e "\t -W <file> : Specify Windows partition (/dev/????) and change the name"
+	echo -e "\t -D <file> : Specify Windows partition (/dev/????) and display the name"
+	echo -e "\t -E <file> : Specify Linux partition (/dev/????) and display the name"
+	echo ""
+	echo -e "\t -n <newname> : Specify the new name"
+	echo -e "\t -i : Use a generated name (M + last bit of IP address, e.g. M15)"
+	echo -e "\t -y : Don't ask for any confirmation"
+	echo ""
+	echo -e "\t -v : Display the version of the script"
+	echo -e "\t -h : Display help"
+	exit 0
+}
+
+function version {
+	echo "$0: Version $version"
+	echo "Group 1, C&N3, University of Abertay Dundee"
+	echo "2014"
+	exit 0
+}
+
+if [ `whoami` != "root" ]; then
+	echo "This script needs root privileges"
+	exit 1
+fi
+
+if [ $# == 0 ]; then
+	help
+fi
+
+while getopts :L:W:n:D:lwideEvyh opt
+do
+	case "$opt" in
+		L) linux="$OPTARG";;
+		W) windows="$OPTARG";;
+		l) linux="$linuxpart";;
+		w) windows="$windowspart";;
+		n) newname="$OPTARG";;
+		d) windows="$windowspart"
+		   displayWin="1";;
+		D) windows="$OPTARG"
+		   displayWin="1";;
+		e) linux="$linuxpart"
+		   displayLin="1";;
+		E) linux="$OPTARG"
+		   displayLin="1";;
+		i) getNewName;;
+		h) help;;
+		v) version;;
+		y) yes="1";;
+		\?) help;;
+		:) echo "Option -$OPTARG needs an argument"
+		   exit 1;;
+	esac
+done
+
+if [ "$displayWin" == "1" ]; then
+	fetchSystemWin $windows
+	displayWin
+	unmount
+fi
+
+if [ "$displayLin" == "1" ]; then
+	fetchSystemLin $linux
+	displayLin
+	unmount
+fi
+
+if [ "$displayWin" == "1" -o "$displayLin" == "1" ]; then
+	exit 0
+fi
+
+if [ "$newname" == "" ]; then
+	read -p "What do you want to set as new name ? " newname
+fi
+
+ok="0"
+while [ $ok == "0" ]
+do
+	if [[ "$newname" =~ ^[a-zA-Z0-9-]{1,15}$ ]]; then
+		ok="1"
+	else
+		echo "The name you put is incorrect. It has to be between 1 and 15 characters and contain only letters and numbers"
+		read -p "What do you want to set as new name ? " newname
+	fi
+done
+
+if [ "$yes" != "1" ]; then
+	read -p "The new name will be $newname. Confirm? Y/[N] " answer
+	if [ "$answer" != "y" -a "$answer" != "Y" -a "$answer" != "yes" ]; then
+		echo "Abort"
+		exit 1
+	fi
+fi
+
+if [ "$linux" != "" ]; then
+	fetchSystemLin $linux
+	changeLinName $newname
+	echo -e "\e[32mLinux computer name changed to $newname\e[39m"
+fi
+
+if [ "$windows" != "" ]; then
+	fetchSystemWin $windows
+	changeWinName $newname
+	echo -e "\e[32mWindows computer name changed to $newname\e[39m"
+fi
+
+unmount
+
+echo
+
